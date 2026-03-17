@@ -1,0 +1,18 @@
+# Variables de entorno
+.env
+
+# Credenciales Google (cualquier archivo JSON de cuenta de servicio)
+*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# macOS
+.DS_Store
+
+# Entornos virtuales
+venv/
+.venv/
