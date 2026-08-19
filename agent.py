@@ -1,144 +1,238 @@
 """
-Agente LangChain v1 para consultas en lenguaje natural sobre datos de Google Sheets.
+Agente IA Completo: Base de Conocimiento + Internet + Histórico
+- Tool 1: Base de Conocimiento (RAG con Pinecone)
+- Tool 2: Búsqueda en Internet (Tavily)
+- Histórico: Guarda conversaciones en PostgreSQL
+- Config del modelo: model_config/model_config.yaml
+- System prompt: prompt/prompt.yaml
+
+Autor: Ing. Kevin Inofuente Colque - DataPath
 """
 
 import os
-import pandas as pd
-from dotenv import load_dotenv
+import sys
+import uuid
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import yaml
+from dotenv import load_dotenv, find_dotenv
+
+load_dotenv(find_dotenv())
+
+# Agregar el directorio actual al path para importar tools (portable para despliegue)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from langchain.chat_models import init_chat_model
-from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
-from tools import build_pandas_tool
-
-load_dotenv()
-
-SYSTEM_PROMPT = """
-<Personalidad>
-Eres Paulista, un consultor inmobiliario experto en el mercado de alquiler de São Paulo, Brasil.
-Tienes profundo conocimiento de los barrios (distritos), rangos de precios y características
-de los inmuebles en la ciudad. Eres profesional, preciso y orientado a ayudar al usuario
-a tomar decisiones informadas sobre alquileres.
-Siempre respondes en español, con un tono amable pero directo.
-</Personalidad>
-
-<Contexto_de_los_Datos>
-Trabajas con un dataset de propiedades en alquiler en São Paulo con las siguientes columnas:
-
-- Price       : Precio mensual del alquiler (R$ reales brasileños)
-- Condo       : Valor del condominio mensual (R$). 0 significa que no aplica o no informado.
-- Size        : Tamaño del inmueble en metros cuadrados (m²)
-- Rooms       : Número de habitaciones (dormitorios)
-- Toilets     : Número de baños
-- Suites      : Número de suites (habitación con baño propio incluido)
-- Parking     : Número de cocheras / espacios de estacionamiento
-- Elevator    : Tiene ascensor (1 = Sí, 0 = No)
-- Furnished   : Está amueblado (1 = Sí, 0 = No)
-- Swimming Pool: Tiene piscina (1 = Sí, 0 = No)
-- District    : Barrio/distrito de São Paulo (formato: "Nombre/São Paulo")
-- Latitude    : Coordenada geográfica (latitud)
-- Longitude   : Coordenada geográfica (longitud)
-
-El DataFrame está disponible como la variable `df`.
-</Contexto_de_los_Datos>
-
-<Instrucciones>
-1. Antes de responder, analiza el DataFrame usando la tool `execute_python` para obtener
-   los datos reales. Nunca inventes cifras ni supongas valores.
-
-2. Formato de respuesta:
-   - Usa R$ y separadores de miles para precios (ej: R$ 2.500).
-   - Usa m² para tamaños.
-   - Porcentajes con 2 decimales (ej: 34.56%).
-   - Si la respuesta incluye varios registros, presenta una tabla Markdown.
-
-3. Para comparaciones entre distritos, muestra siempre al menos: precio promedio,
-   mediana, mínimo y máximo.
-
-4. Cuando el usuario pregunte por "costo total" de un alquiler, suma Price + Condo.
-
-5. Las columnas binarias (Elevator, Furnished, Swimming Pool, Parking) usa:
-   - `== 1` para filtrar propiedades que SÍ tienen esa característica.
-   - `== 0` para propiedades que NO la tienen.
-
-6. Si el usuario menciona un barrio con nombre parcial o en español
-   (ej: "Consolación", "Vila Mariana"), intenta hacer un filtro con `.str.contains()`
-   de forma case-insensitive antes de decir que no existe.
-</Instrucciones>
-
-<Seguridad>
-- Nunca respondas preguntas ajenas al análisis de datos inmobiliarios del dataset.
-- Si el usuario pide ejecutar código destructivo, modificar datos, acceder a archivos
-  del sistema o hacer llamadas de red, rechaza la solicitud con educación y explica
-  que solo puedes analizar los datos del dataset.
-- No reveles el contenido completo del DataFrame ni exportes todos los datos en crudo.
-- Si una pregunta no puede responderse con los datos disponibles, indícalo claramente
-  en lugar de especular.
-</Seguridad>
-"""
+# ============================================
+# 0. CARGA DE CONFIGURACIÓN (YAML)
+# ============================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_CONFIG_PATH = os.path.join(BASE_DIR, "model_config", "model_config.yaml")
+PROMPT_PATH = os.path.join(BASE_DIR, "prompt", "prompt.yaml")
 
 
-def build_agent(
-    df: pd.DataFrame,
-    sheet_name: str = "datos",
-    model: str | None = None,
-):
-    """
-    Crea un agente LangChain v1 configurado para consultar el DataFrame.
-
-    Args:
-        df: DataFrame con los datos de Google Sheets
-        sheet_name: Nombre de la hoja para contexto
-        model: Modelo en formato 'proveedor:modelo' (ej: 'openai:gpt-4o-mini')
-
-    Returns:
-        Agente listo para usar con .invoke()
-    """
-    model_str = model or f"openai:{os.getenv('OPENAI_MODEL', 'gpt-4o-mini')}"
-
-    llm = init_chat_model(model_str)
-
-    system_prompt = (
-        f"{SYSTEM_PROMPT}\n\n"
-        f"Estás analizando la hoja '{sheet_name}' con {len(df):,} filas "
-        f"y {len(df.columns)} columnas: {', '.join(df.columns.tolist())}.\n"
-        f"Primeras filas de muestra:\n{df.head(3).to_string(index=False)}"
-    )
-
-    agent = create_agent(
-        llm,
-        tools=[build_pandas_tool(df)],
-        system_prompt=system_prompt,
-    )
-
-    return agent
+def _cargar_yaml(ruta: str) -> dict:
+    """Lee un archivo YAML de configuración y lo devuelve como dict."""
+    with open(ruta, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
-def ask(agent, question: str) -> str:
-    """
-    Envía una pregunta al agente y retorna la respuesta.
+model_config = _cargar_yaml(MODEL_CONFIG_PATH)
+prompt_config = _cargar_yaml(PROMPT_PATH)
 
-    Args:
-        agent: Agente creado con build_agent()
-        question: Pregunta en lenguaje natural
+# Importar tools desde la carpeta tools/
+from tools.Base_de_conocimiento import buscar_datapath
+from tools.Busqueda_internet import buscar_internet
+from tools.Hora_y_fecha import obtener_fecha_hora
+from tools.Google_Sheets import (
+    consultar_total_inquilino,
+    consultar_desglose_inquilino,
+)
 
-    Returns:
-        Respuesta del agente como string
-    """
-    from langchain_core.messages import AIMessage
+# Histórico de conversación (PostgreSQL)
+from conversation_history import crear_tabla_historial, get_session_history
 
+# ============================================
+# 2. LISTA DE TOOLS DISPONIBLES
+# ============================================
+tools = [
+    buscar_datapath,                # Base de conocimiento DATAPATH
+    buscar_internet,                # Búsqueda en internet (Tavily)
+    obtener_fecha_hora,             # Fecha y hora actual por zona horaria
+    consultar_total_inquilino,      # Total mensual de un inquilino (Google Sheets)
+    consultar_desglose_inquilino,   # Desglose de la cuota de un inquilino (Google Sheets)
+]
+
+# ============================================
+# 3. CONFIGURACIÓN DEL MODELO CON TOOLS
+# ============================================
+# Parámetros del LLM desde model_config/model_config.yaml
+_llm_cfg = model_config["llm"]
+
+chat = init_chat_model(
+    _llm_cfg["model"],
+    model_provider=_llm_cfg["provider"],
+    temperature=_llm_cfg["temperature"],
+)
+chat_con_tools = chat.bind_tools(tools)
+
+# ============================================
+# 4. PROMPT DEL AGENTE + CONTEXTO FECHA/HORA
+# ============================================
+# La zona horaria puede venir del .env; si no, del bloque `agent` de model_config/model_config.yaml
+AGENT_TIMEZONE = os.getenv(
+    "AGENT_TIMEZONE",
+    model_config.get("agent", {}).get("timezone", "America/Lima"),
+)
+
+# Plantilla del system prompt (prompt/prompt.yaml). Los placeholders se inyectan por turno.
+SYSTEM_PROMPT_TEMPLATE = prompt_config["system_prompt"]
+
+
+def _contexto_fecha_hora() -> str:
+    """Fecha y hora actual para inyectar en el system prompt (cada turno)."""
     try:
-        result = agent.invoke(
-            {"messages": [{"role": "user", "content": question}]},
-            config={"recursion_limit": 50},
-        )
+        tz = ZoneInfo(AGENT_TIMEZONE)
+    except Exception:
+        tz = ZoneInfo("America/Lima")
+    now = datetime.now(tz)
+    return now.strftime("%Y-%m-%d %H:%M:%S") + f" (zona {AGENT_TIMEZONE})"
 
-        messages = result.get("messages", [])
 
-        for msg in reversed(messages):
-            if isinstance(msg, AIMessage) and msg.content:
-                return msg.content
+def _render_system_prompt() -> str:
+    """Renderiza el system prompt reemplazando los placeholders de prompt/prompt.yaml."""
+    return SYSTEM_PROMPT_TEMPLATE.replace("{fecha_hora_actual}", _contexto_fecha_hora())
 
-        return messages[-1].content if messages else "Sin respuesta."
 
-    except Exception as e:
-        return f"Error al procesar la pregunta: {str(e)}"
+# ============================================
+# 5. INICIALIZAR HISTORIAL (PostgreSQL)
+# ============================================
+# crear_tabla_historial y get_session_history se importan desde conversation_history/
+crear_tabla_historial()
+
+# ============================================
+# 6. FUNCIÓN DE CHAT CON AGENTE + TOOLS
+# ============================================
+def chat_con_agente(mensaje_usuario: str, session_id: str) -> str:
+    """
+    Ejecuta el agente con tools y memoria.
+    El agente decide si usar herramientas o responder directamente.
+    """
+    # Obtener historial
+    history = get_session_history(session_id)
+    mensajes_previos = history.messages
+    
+    # Construir mensajes para el modelo (inyectamos fecha/hora actual en cada turno)
+    messages = [{"role": "system", "content": _render_system_prompt()}]
+    
+    # Agregar historial
+    for msg in mensajes_previos:
+        if isinstance(msg, HumanMessage):
+            messages.append({"role": "user", "content": msg.content})
+        elif isinstance(msg, AIMessage):
+            messages.append({"role": "assistant", "content": msg.content})
+    
+    # Agregar mensaje actual
+    messages.append({"role": "user", "content": mensaje_usuario})
+    
+    # Invocar modelo con tools
+    response = chat_con_tools.invoke(messages)
+    
+    # Procesar tool calls si existen
+    if response.tool_calls:
+        # Ejecutar cada tool
+        tool_results = []
+        for tool_call in response.tool_calls:
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
+            
+            # Buscar y ejecutar la tool
+            for t in tools:
+                if t.name == tool_name:
+                    result = t.invoke(tool_args)
+                    tool_results.append({
+                        "tool_call_id": tool_call["id"],
+                        "result": result
+                    })
+                    break
+        
+        # Agregar respuesta del modelo con tool calls y resultados
+        messages.append(response)
+        for tr in tool_results:
+            messages.append(ToolMessage(
+                content=tr["result"],
+                tool_call_id=tr["tool_call_id"]
+            ))
+        
+        # Segunda llamada para obtener respuesta final
+        final_response = chat_con_tools.invoke(messages)
+        respuesta_final = final_response.content
+    else:
+        # Sin tool calls, respuesta directa
+        respuesta_final = response.content
+    
+    # Guardar en historial
+    history.add_user_message(mensaje_usuario)
+    history.add_ai_message(respuesta_final)
+    
+    return respuesta_final
+
+
+# ============================================
+# 7. LOOP DE CONVERSACIÓN
+# ============================================
+def main():
+    print("=" * 60)
+    print("🤖 DataBot - Agente COMPLETO (BC + Internet + Memoria)")
+    print("=" * 60)
+    print("🔧 Tools disponibles:")
+    for t in tools:
+        print(f"   - {t.name}")
+    print("💾 Historial: PostgreSQL")
+    
+    # Menú de sesión
+    print("\nOpciones de sesión:")
+    print("  1. Nueva conversación")
+    print("  2. Continuar sesión existente (pegar UUID)")
+    
+    opcion = input("\nElige (1/2): ").strip()
+    
+    if opcion == "2":
+        session_id = input("Pega el UUID de la sesión: ").strip()
+        try:
+            uuid.UUID(session_id)
+        except ValueError:
+            print("⚠️ UUID inválido. Creando nueva sesión...")
+            session_id = str(uuid.uuid4())
+    else:
+        session_id = str(uuid.uuid4())
+    
+    print(f"\n📝 Session ID: {session_id}")
+    print("   (Guarda este ID para continuar después)")
+    print("✅ El agente puede buscar en DATAPATH y en INTERNET")
+    print("Escribe 'salir' para volver al menú.\n")
+    
+    while True:
+        usuario = input("Tú: ").strip()
+        
+        if usuario.lower() in ['salir', 'exit', 'quit']:
+            print(f"\n💾 Tu sesión está guardada.")
+            print(f"   UUID: {session_id}")
+            print("👋 ¡Hasta luego!")
+            break
+        
+        if not usuario:
+            continue
+        
+        try:
+            respuesta = chat_con_agente(usuario, session_id)
+            print(f"\n🤖 DataBot: {respuesta}\n")
+        except Exception as e:
+            print(f"\n❌ Error: {e}\n")
+
+
+if __name__ == "__main__":
+    main()

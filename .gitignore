@@ -1,18 +1,32 @@
-# Variables de entorno
+# Secretos y credenciales
 .env
-
-# Credenciales Google (cualquier archivo JSON de cuenta de servicio)
+.env.*
+# La plantilla SÍ se versiona: solo lleva placeholders, ningún valor real
+!.env.example
+credentials/
 *.json
+!requirements*.json
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# macOS
-.DS_Store
-
-# Entornos virtuales
-venv/
+*.py[cod]
+*$py.class
+*.so
+.Python
 .venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Sistema
+.DS_Store
+Thumbs.db
