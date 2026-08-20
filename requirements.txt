@@ -24,7 +24,7 @@ psycopg[binary]           # Driver PostgreSQL v3
 # BASE DE CONOCIMIENTO (RAG con Qdrant)
 # ============================================
 # El par (modelo de embeddings, colección) vive en vector_store.py
-langchain-qdrant>=0.2,<1.0  # Integración LangChain + Qdrant
+langchain-qdrant>=1.1,<2.0    # Integración LangChain + Qdrant (serie 1.x, compatible con langchain-core 1.x)
 qdrant-client~=1.19.0       # Cliente Qdrant
 pypdf>=4.0,<7.0             # Loader de PDFs (PyPDFLoader), para la ingesta
 

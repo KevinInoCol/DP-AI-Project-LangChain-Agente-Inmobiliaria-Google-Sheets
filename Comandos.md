@@ -1,8 +1,11 @@
 ## Crea un Virtual Environment:
-conda create -n LangChain-Agente-Sheets python=3.11
+conda create -n LangChain-Agente-Inmobiliaria python=3.11
 
 ## Activa tu Virtual Environment:
-conda activate LangChain-Agente-Sheets
+conda activate LangChain-Agente-Inmobiliaria
+
+## Instalamos las dependencias:
+pip install -r requirements.txt
 
 ## No te olvides activar la API de Google Sheets
 
