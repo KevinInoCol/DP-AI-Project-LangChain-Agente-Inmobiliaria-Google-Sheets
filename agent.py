@@ -1,6 +1,6 @@
 """
 Agente IA Completo: Base de Conocimiento + Internet + Histórico
-- Tool 1: Base de Conocimiento (RAG con Pinecone)
+- Tool 1: Base de Conocimiento de Alpha State (RAG con Qdrant)
 - Tool 2: Búsqueda en Internet (Tavily)
 - Histórico: Guarda conversaciones en PostgreSQL
 - Config del modelo: model_config/model_config.yaml
@@ -44,7 +44,7 @@ model_config = _cargar_yaml(MODEL_CONFIG_PATH)
 prompt_config = _cargar_yaml(PROMPT_PATH)
 
 # Importar tools desde la carpeta tools/
-from tools.Base_de_conocimiento import buscar_datapath
+from tools.Base_de_conocimiento import buscar_alpha_state
 from tools.Busqueda_internet import buscar_internet
 from tools.Hora_y_fecha import obtener_fecha_hora
 from tools.Google_Sheets import (
@@ -59,7 +59,7 @@ from conversation_history import crear_tabla_historial, get_session_history
 # 2. LISTA DE TOOLS DISPONIBLES
 # ============================================
 tools = [
-    buscar_datapath,                # Base de conocimiento DATAPATH
+    buscar_alpha_state,                # Base de conocimiento Alpha State (RAG/Qdrant)
     buscar_internet,                # Búsqueda en internet (Tavily)
     obtener_fecha_hora,             # Fecha y hora actual por zona horaria
     consultar_total_inquilino,      # Total mensual de un inquilino (Google Sheets)
@@ -186,7 +186,7 @@ def chat_con_agente(mensaje_usuario: str, session_id: str) -> str:
 # ============================================
 def main():
     print("=" * 60)
-    print("🤖 DataBot - Agente COMPLETO (BC + Internet + Memoria)")
+    print("🤖 Agente Alpha State (Sheets + RAG + Internet + Memoria)")
     print("=" * 60)
     print("🔧 Tools disponibles:")
     for t in tools:
@@ -212,7 +212,7 @@ def main():
     
     print(f"\n📝 Session ID: {session_id}")
     print("   (Guarda este ID para continuar después)")
-    print("✅ El agente puede buscar en DATAPATH y en INTERNET")
+    print("✅ El agente puede consultar Google Sheets, la base de Alpha State e INTERNET")
     print("Escribe 'salir' para volver al menú.\n")
     
     while True:

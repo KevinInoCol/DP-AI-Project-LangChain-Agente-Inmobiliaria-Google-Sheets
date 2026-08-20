@@ -20,10 +20,10 @@ load_dotenv(find_dotenv())
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Importar directamente el agente (sin rutas locales)
-from agent import chat_con_agente
+from agent import chat_con_agente, tools
 
-print("🤖 Cargando Agente D (Pinecone)...")
-print("✅ Agente D cargado correctamente")
+print("🤖 Cargando Agente Alpha State (Qdrant)...")
+print("✅ Agente Alpha State cargado correctamente")
 
 # ============================================
 # CONFIGURACIÓN DE CHATWOOT
@@ -117,8 +117,8 @@ def conversation_id_to_uuid(conversation_id: int) -> str:
 # FASTAPI APP
 # ============================================
 app = FastAPI(
-    title="DataBot - Agente IA con Chatwoot",
-    description="Webhook para integrar el Agente D con Chatwoot",
+    title="Alpha State - Agente IA con Chatwoot",
+    description="Webhook para integrar el agente de Alpha State con Chatwoot",
     version="1.0.0"
 )
 
@@ -127,7 +127,7 @@ app = FastAPI(
 async def chatwoot_webhook(request: Request):
     """
     Endpoint que recibe los webhooks de Chatwoot.
-    Procesa mensajes entrantes y responde usando el Agente D.
+    Procesa mensajes entrantes y responde usando el agente de Alpha State.
     """
     data = await request.json()
     
@@ -181,9 +181,9 @@ async def chatwoot_webhook(request: Request):
         
         return {"status": "success", "action": "human_handoff"}
     
-    # Procesar con el Agente D
+    # Procesar con el agente
     try:
-        print(f"   🤖 Procesando con Agente D...")
+        print(f"   🤖 Procesando con el agente...")
         
         # Convertir conversation_id a UUID para el historial
         session_id = conversation_id_to_uuid(conversation_id)
@@ -213,11 +213,11 @@ async def chatwoot_webhook(request: Request):
 def read_root():
     """Endpoint raíz con información del servicio."""
     return {
-        "service": "DataBot - Agente IA",
+        "service": "Alpha State - Agente IA",
         "version": "1.0.0",
-        "agent": "Agente D (RAG + Internet + Memoria)",
+        "agent": "Alpha State (Sheets + RAG + Internet + Memoria)",
         "model": "GPT-4.1",
-        "tools": ["buscar_datapath", "buscar_internet", "obtener_fecha_hora"],
+        "tools": [t.name for t in tools],
         "chatwoot_configured": all([CHATWOOT_BASE_URL, CHATWOOT_ACCOUNT_ID, CHATWOOT_API_TOKEN]),
         "bot_label": BOT_LABEL,
         "status": "ready"
@@ -229,7 +229,7 @@ def health_check():
     """Endpoint de salud del servicio."""
     return {
         "status": "healthy",
-        "agent": "Agente D",
+        "agent": "Alpha State",
         "chatwoot": "connected" if all([CHATWOOT_BASE_URL, CHATWOOT_ACCOUNT_ID, CHATWOOT_API_TOKEN]) else "not configured"
     }
 
@@ -278,9 +278,9 @@ if __name__ == "__main__":
     print("=" * 60)
     print("🚀 INICIANDO DATABOT CON CHATWOOT")
     print("=" * 60)
-    print(f"🤖 Agente: D (RAG + Internet + Memoria)")
+    print(f"🤖 Agente: Alpha State (Sheets + RAG + Internet + Memoria)")
     print(f"🧠 Modelo: GPT-4.1")
-    print(f"🔧 Tools: buscar_datapath, buscar_internet, obtener_fecha_hora")
+    print(f"🔧 Tools: {', '.join(t.name for t in tools)}")
     print(f"💾 Historial: PostgreSQL")
     print(f"🏷️  Etiqueta bot (handoff): {BOT_LABEL or 'ninguna'}")
     print(f"🚫 No responde si tiene tag: {TAG_IA_OFF}")

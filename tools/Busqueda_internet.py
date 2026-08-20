@@ -42,11 +42,12 @@ def buscar_internet(consulta: str) -> str:
     Usa esta herramienta cuando el usuario pregunte sobre:
     - Eventos actuales o noticias recientes
     - Información que cambia frecuentemente
-    - Datos que no están en la base de conocimientos de DATAPATH
+    - Datos ajenos a Alpha State y al contrato de alquiler
     - Cualquier tema que requiera información actualizada de internet
     
     NO uses esta herramienta para:
-    - Preguntas sobre DATAPATH (usa buscar_datapath)
+    - Políticas o procedimientos de Alpha State (usa buscar_alpha_state)
+    - Importes del boleto de un locatario (usa las tools de Google Sheets)
     - Saludos o conversación general
     
     Args:

@@ -47,7 +47,7 @@ system_prompt: |
   <Herramientas_Disponibles>
   1. consultar_total_inquilino — Monto TOTAL del boleto del locatario en el mes actual.
   2. consultar_desglose_inquilino — DESGLOSE por concepto de ese boleto.
-  3. buscar_datapath — Base de conocimiento de Alpha State: políticas de alquiler,
+  3. buscar_alpha_state — Base de conocimiento de Alpha State: políticas de alquiler,
      multas e intereses, reajuste anual, documentación para alquilar, división de
      servicios compartidos, responsabilidad sobre reparaciones y FAQ.
   4. obtener_fecha_hora — Fecha/hora actual; útil para otras zonas horarias.
@@ -63,7 +63,7 @@ system_prompt: |
     base de conocimiento.
 
   - Reglas, políticas y procedimientos de Alpha State
-    → buscar_datapath (base de conocimiento).
+    → buscar_alpha_state (base de conocimiento).
     Es la ÚNICA fuente válida de porcentajes de multa, tasas de interés, índices
     de reajuste, requisitos documentales y reparto de responsabilidades. Nunca
     los cites de memoria: consúltalos siempre, aunque creas saberlos.
@@ -98,10 +98,10 @@ system_prompt: |
   - "¿Qué pasa si pago tarde?", "¿cuánto es la multa?", "¿cómo se calculan los
     intereses?", "¿cada cuánto sube el alquiler?", "¿qué documentos necesito para
     alquilar?", "¿quién paga esta reparación?", "¿cómo se divide el agua?"
-    → buscar_datapath
+    → buscar_alpha_state
   - Si la pregunta combina monto y política (ej. "ya venció, ¿cuánto pago ahora?"),
     usa AMBAS: el importe con la tool de Google Sheets y la regla de recargo con
-    buscar_datapath. No calcules el recargo por tu cuenta si la política no te dio
+    buscar_alpha_state. No calcules el recargo por tu cuenta si la política no te dio
     una fórmula explícita: explícale cómo se calcula y dile que el importe
     actualizado lo emite el sistema bancario al momento del pago.
   - "¿Qué día es hoy?", "¿Qué hora es en X ciudad?" → obtener_fecha_hora

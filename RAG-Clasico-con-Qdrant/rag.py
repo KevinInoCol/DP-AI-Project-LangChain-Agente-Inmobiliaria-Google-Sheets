@@ -14,6 +14,7 @@ Ejecutar:
 """
 
 import os
+import sys
 
 # Paso 1: Elección de la Técnica de DocumentLoader
 from langchain_community.document_loaders import PyPDFLoader
@@ -21,18 +22,21 @@ from langchain_community.document_loaders import PyPDFLoader
 # Paso 2: Elección de Técnica de Splitting
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# Paso 3: Elección del Modelo de Word Embedding
-from langchain_openai import OpenAIEmbeddings
-
 # Paso 4: VectorStore
 # Patrón de: docs.langchain.com/oss/python/langchain/knowledge-base
 from langchain_qdrant import QdrantVectorStore
-from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
 
 from dotenv import load_dotenv
 
 from validacion_nombre_tenant_id import validar_qdrant
+
+# La raíz del proyecto al path: vector_store.py vive un nivel arriba
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Paso 3: el modelo de embeddings y la colección NO se definen acá.
+# Vienen de vector_store.py, la fuente única que también usa la tool de consulta.
+from vector_store import COLLECTION_NAME, MODELO_EMBEDDING, get_client, get_embedding_model
 
 load_dotenv()
 
@@ -40,20 +44,19 @@ load_dotenv()
 # Todo lo parametrizable vive acá arriba: se lee de un vistazo y se cambia en un
 # solo sitio, sin bucear en la lógica.
 
-# Paso 1
-RUTA_PDF = "Base_de_Conocimiento/SOBRE DATAPATH.pdf"
+# Paso 1 — anclado a __file__: el script corre igual desde cualquier directorio
+RUTA_PDF = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "Base_de_Conocimiento",
+    "Base de Conocimiento - Alpha State.pdf",
+)
 
 # Paso 2
 TAMANO_CHUNK = 500
 SOLAPAMIENTO_CHUNK = 200
 
-# Paso 3
-MODELO_EMBEDDING = "text-embedding-3-small"
-
-# Paso 4 — Qdrant del VPS, no el docker-compose local
+# Pasos 3 y 4 (MODELO_EMBEDDING y COLLECTION_NAME) se importan de vector_store.py
 QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "tenant_id_alpha_state")
 
 
 def verificar_configuracion() -> None:
@@ -96,12 +99,12 @@ if __name__ == '__main__':
     print(f"Paso 2 — El documento se partió en {len(chunks)} chunks")
 
     #========== Paso 3: Embeddings - Cargamos el Modelo de Embeddings para convertir los Chunks ==========
-    embedding_model = OpenAIEmbeddings(model=MODELO_EMBEDDING)
+    embedding_model = get_embedding_model()
 
     # El tamaño del vector lo dicta el modelo, no lo escribimos a mano: así el
     # script sigue funcionando si mañana cambiamos de modelo de embeddings.
     vector_size = len(embedding_model.embed_query("texto de muestra"))
-    print(f"Paso 3 — Modelo de embeddings listo, {vector_size} dimensiones por vector")
+    print(f"Paso 3 — {MODELO_EMBEDDING} listo, {vector_size} dimensiones por vector")
 
     #================= Paso 4: VectorStore - Llevamos los Embeddings al Qdrant del VPS ==================
     # Acá está la diferencia con los otros proyectos: en vez de QdrantClient("localhost")
@@ -110,7 +113,7 @@ if __name__ == '__main__':
     # port=None es obligatorio: si no se pasa, qdrant-client le pega :6333 a la
     # URL por su cuenta y el intento muere con "Connection refused", porque el
     # proxy del VPS (EasyPanel) publica Qdrant en el 443 de https, no en el 6333.
-    client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, port=None)
+    client = get_client()
 
     if not client.collection_exists(COLLECTION_NAME):
         client.create_collection(

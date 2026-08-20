@@ -32,12 +32,14 @@ Se puede usar por **CLI** o exponerlo como **webhook de Chatwoot**.
 │
 ├── tools/                         # Una tool por archivo
 │   ├── Google_Sheets.py           #   consultar_total_inquilino / consultar_desglose_inquilino
-│   ├── Base_de_conocimiento.py    #   buscar_datapath  (RAG)
+│   ├── Base_de_conocimiento.py    #   buscar_alpha_state  (RAG sobre Qdrant)
 │   ├── Busqueda_internet.py       #   buscar_internet  (Tavily)
 │   └── Hora_y_fecha.py            #   obtener_fecha_hora
 │
 ├── conversation_history/          # Persistencia de la conversación por session_id
 │   └── postgres_chat_history.py   #   PostgresChatMessageHistory sobre PostgreSQL
+│
+├── vector_store.py                # FUENTE ÚNICA del par (embedding model, colección)
 │
 ├── RAG-Clasico-con-Qdrant/        # Pipeline de INGESTA (reindexado de la base de conocimiento)
 │   ├── rag.py                     #   loader → splitter → embeddings → Qdrant
@@ -52,6 +54,10 @@ Se puede usar por **CLI** o exponerlo como **webhook de Chatwoot**.
 La configuración vive en YAML, no en el código: para cambiar el modelo se toca
 `model_config/model_config.yaml`, y para cambiar la persona del agente,
 `prompt/prompt.yaml`. `agent.py` solo cambia cuando cambia la orquestación.
+
+`vector_store.py` es la **fuente única** del par (modelo de embeddings, colección):
+tanto la ingesta como la tool de consulta importan de ahí. Si cada uno definiera el
+suyo y no coincidieran, la búsqueda devolvería vacío sin lanzar ningún error.
 
 ---
 

@@ -21,17 +21,12 @@ langchain-postgres        # PostgresChatMessageHistory
 psycopg[binary]           # Driver PostgreSQL v3
 
 # ============================================
-# BASE DE CONOCIMIENTO (RAG con Supabase)
+# BASE DE CONOCIMIENTO (RAG con Qdrant)
 # ============================================
-supabase>=1.0.0           # Cliente de Supabase
-numpy                     # Cálculo de similitud coseno
-
-# ============================================
-# BASE DE CONOCIMIENTO (RAG con Pinecone)
-# ============================================
-langchain-pinecone        # Integración LangChain + Pinecone
-pinecone                  # Cliente Pinecone
-pypdf>=3.0.0              # Loader de PDFs (PyPDFLoader)
+# El par (modelo de embeddings, colección) vive en vector_store.py
+langchain-qdrant>=0.2,<1.0  # Integración LangChain + Qdrant
+qdrant-client~=1.19.0       # Cliente Qdrant
+pypdf>=4.0,<7.0             # Loader de PDFs (PyPDFLoader), para la ingesta
 
 # ============================================
 # TOOLS

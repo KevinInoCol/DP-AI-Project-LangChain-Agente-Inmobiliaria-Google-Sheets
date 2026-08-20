@@ -1,11 +1,11 @@
 """
-Tool: Consulta de cuotas mensuales de inquilinos en Google Sheets (SOLO LECTURA)
-Lee la hoja de cálculo del edificio (ej. "La Joya - Cálculo de Cuota") usando
+Tool: Consulta del boleto mensual de los locatarios en Google Sheets (SOLO LECTURA)
+Lee la hoja de cálculo de Alpha State con los importes del mes usando
 una cuenta de servicio de Google Cloud.
 
 Expone dos tools al agente:
 - consultar_total_inquilino: monto total a pagar de un inquilino en el mes actual
-- consultar_desglose_inquilino: detalle de qué incluye su cuota (luz, agua, etc.)
+- consultar_desglose_inquilino: detalle de qué incluye su boleto (alquiler, IPTU, agua, etc.)
 
 Autor: Ing. Kevin Inofuente Colque - DataPath
 """
@@ -27,7 +27,7 @@ load_dotenv(find_dotenv())
 # CONFIGURACIÓN
 # ============================================
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
-GOOGLE_SHEETS_WORKSHEET = os.getenv("GOOGLE_SHEETS_WORKSHEET", "La Joya")
+GOOGLE_SHEETS_WORKSHEET = os.getenv("GOOGLE_SHEETS_WORKSHEET", "Rio Sul")
 GOOGLE_SHEETS_HEADER_ROW = int(os.getenv("GOOGLE_SHEETS_HEADER_ROW", "3"))
 # Fila opcional con agrupaciones por encima de los headers (ej. "Consumo de Agua",
 # "SubTotal", "Total"). Si una celda de header está vacía, se usa el valor de
@@ -184,7 +184,7 @@ def _columnas_identificadoras(headers: list) -> tuple:
 
 
 def _buscar_fila_inquilino(rows: list, headers: list, identificador: str) -> Optional[dict]:
-    """Busca la fila de un inquilino por nombre (parcial) o número de departamento."""
+    """Busca la fila de un locatario por nombre (parcial) o identificador de unidad."""
     ident_norm = _normalize(identificador)
     if not ident_norm:
         return None
@@ -245,16 +245,19 @@ def _extraer_identidad(fila: dict, headers: list) -> tuple:
 @tool
 def consultar_total_inquilino(identificador: str) -> str:
     """
-    Consulta el monto TOTAL a pagar de un inquilino en el mes actual.
+    Consulta el monto TOTAL del boleto de un locatario en el mes actual.
 
-    Úsala cuando el usuario pregunte:
+    Úsala cuando el locatario pregunte:
     - "¿Cuánto debo pagar este mes?"
-    - "¿Cuánto es mi cuota?"
-    - "¿Cuál es mi total de mantenimiento?"
+    - "¿Cuánto es mi alquiler?"
+    - "¿Cuánto vino el boleto?"
+
+    NO la uses para explicar reglas de multas, intereses o reajuste: para eso
+    está buscar_alpha_state.
 
     Args:
-        identificador: Nombre completo o parcial del inquilino, o número de
-                       departamento. Ejemplos: "Juan Pérez", "Juan", "301".
+        identificador: Nombre completo o parcial del locatario, o identificador
+                       de su unidad. Ejemplos: "Juan Pérez", "Juan", "301".
     """
     print(f"   🏢 Consultando total para: '{identificador}'")
     try:
@@ -262,16 +265,16 @@ def consultar_total_inquilino(identificador: str) -> str:
         fila = _buscar_fila_inquilino(rows, headers, identificador)
         if not fila:
             return (
-                f"No encontré un inquilino que coincida con '{identificador}'. "
-                f"Pídele al usuario que confirme su nombre completo o el número "
-                f"de su departamento."
+                f"No encontré un locatario que coincida con '{identificador}'. "
+                f"Pídele al usuario que confirme su nombre completo o el "
+                f"identificador de su unidad."
             )
 
         nombre, depto = _extraer_identidad(fila, headers)
         col_total = _identificar_columna_total(headers)
         total = fila.get(col_total) if col_total else None
 
-        partes = ["💰 Cuota mensual:"]
+        partes = ["💰 Boleto del mes:"]
         if nombre:
             partes.append(f"- Inquilino: {nombre}")
         if depto:
@@ -291,19 +294,19 @@ def consultar_total_inquilino(identificador: str) -> str:
 @tool
 def consultar_desglose_inquilino(identificador: str) -> str:
     """
-    Devuelve el DESGLOSE COMPLETO de la cuota mensual de un inquilino:
-    cuánto paga por consumo de agua, luz, administración, limpieza,
-    mantenimiento, gastos extraordinarios, etc.
+    Devuelve el DESGLOSE COMPLETO por concepto del boleto de un locatario:
+    alquiler neto, IPTU, agua/saneamiento, seguro de incendio, gastos
+    bancarios y demás conceptos del contrato.
 
-    Úsala cuando el usuario pregunte:
-    - "¿Por qué tan caro?"
-    - "¿Qué incluye mi pago?"
-    - "¿Cuánto es la luz / agua / administración / limpieza?"
-    - "Dame el detalle de mi cuota"
+    Úsala cuando el locatario pregunte:
+    - "¿Por qué vino tan alto?"
+    - "¿Qué incluye el boleto?"
+    - "¿Cuánto es el IPTU / el agua / el seguro?"
+    - "Dame el detalle"
 
     Args:
-        identificador: Nombre completo o parcial del inquilino, o número de
-                       departamento. Ejemplos: "Juan Pérez", "Juan", "301".
+        identificador: Nombre completo o parcial del locatario, o identificador
+                       de su unidad. Ejemplos: "Juan Pérez", "Juan", "301".
     """
     print(f"   🏢 Consultando desglose para: '{identificador}'")
     try:
@@ -311,9 +314,9 @@ def consultar_desglose_inquilino(identificador: str) -> str:
         fila = _buscar_fila_inquilino(rows, headers, identificador)
         if not fila:
             return (
-                f"No encontré un inquilino que coincida con '{identificador}'. "
-                f"Pídele al usuario que confirme su nombre completo o el número "
-                f"de su departamento."
+                f"No encontré un locatario que coincida con '{identificador}'. "
+                f"Pídele al usuario que confirme su nombre completo o el "
+                f"identificador de su unidad."
             )
 
         nombre, depto = _extraer_identidad(fila, headers)
@@ -324,7 +327,7 @@ def consultar_desglose_inquilino(identificador: str) -> str:
             "unidad", "bloque", "participacion",
         )
 
-        partes = ["📋 Desglose de la cuota mensual:"]
+        partes = ["📋 Desglose del boleto:"]
         if nombre:
             partes.append(f"- Inquilino: {nombre}")
         if depto:
