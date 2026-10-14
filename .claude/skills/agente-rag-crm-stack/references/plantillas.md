@@ -20,8 +20,8 @@ qdrant-client~=1.19.0
 pypdf>=4.0,<7.0
 
 # Memoria
-langchain-postgres
-psycopg[binary]
+langgraph-checkpoint-postgres
+psycopg[binary,pool]
 
 # Tools
 langchain-tavily
@@ -205,7 +205,7 @@ system_prompt: |
 
 ```python
 """
-Agente <negocio>: RAG + tools + histórico.
+Agente <negocio>: RAG + tools + memoria (checkpointer + log plano).
 - Config del modelo: model_config/model_config.yaml
 - System prompt: prompt/prompt.yaml
 """
@@ -223,11 +223,18 @@ load_dotenv(find_dotenv())
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from langchain.agents import create_agent
+from langchain.agents.middleware import ModelRequest, dynamic_prompt
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from tools import <tool_a>, <tool_b>
-from conversation_history import crear_tabla_historial, get_session_history
+from conversation_history import (
+    checkpointer,
+    crear_tablas_checkpointer,
+    crear_tabla_log,
+    log_mensaje,
+)
 
 # ============================================
 # 1. CARGA DE CONFIGURACIÓN (YAML)
@@ -253,7 +260,7 @@ prompt_config = _cargar_yaml(PROMPT_PATH)
 tools = [<tool_a>, <tool_b>]
 
 # ============================================
-# 3. MODELO CON TOOLS
+# 3. MODELO (create_agent le enlaza las tools)
 # ============================================
 _llm_cfg = model_config["llm"]
 chat = init_chat_model(
@@ -261,7 +268,6 @@ chat = init_chat_model(
     model_provider=_llm_cfg["provider"],
     temperature=_llm_cfg["temperature"],
 )
-chat_con_tools = chat.bind_tools(tools)
 
 # ============================================
 # 4. PROMPT + CONTEXTO TEMPORAL
@@ -288,42 +294,50 @@ def _render_system_prompt() -> str:
     return SYSTEM_PROMPT_TEMPLATE.replace("{fecha_hora_actual}", _contexto_fecha_hora())
 
 
-crear_tabla_historial()
+@dynamic_prompt
+def _system_prompt_del_turno(request: ModelRequest) -> str:
+    """System prompt con la fecha/hora de ESTE turno. No se persiste."""
+    return _render_system_prompt()
+
+
+crear_tablas_checkpointer()
+crear_tabla_log()
 
 
 # ============================================
-# 5. CHAT CON TOOLS
+# 5. AGENTE (bucle de tools + memoria por thread_id)
 # ============================================
-def chat_con_agente(mensaje_usuario: str, session_id: str) -> str:
-    """Ejecuta el agente con tools y memoria."""
-    history = get_session_history(session_id)
+agente = create_agent(
+    model=chat,
+    tools=tools,
+    middleware=[_system_prompt_del_turno],
+    checkpointer=checkpointer,
+)
 
-    messages = [{"role": "system", "content": _render_system_prompt()}]
-    for msg in history.messages:
+
+def _tools_del_turno(mensajes: list) -> list[str]:
+    """Tools llamadas después del último mensaje del usuario."""
+    usadas = []
+    for msg in reversed(mensajes):
         if isinstance(msg, HumanMessage):
-            messages.append({"role": "user", "content": msg.content})
-        elif isinstance(msg, AIMessage):
-            messages.append({"role": "assistant", "content": msg.content})
-    messages.append({"role": "user", "content": mensaje_usuario})
+            break
+        if isinstance(msg, AIMessage):
+            usadas.extend(tc["name"] for tc in msg.tool_calls)
+    return list(reversed(usadas))
 
-    response = chat_con_tools.invoke(messages)
 
-    if response.tool_calls:
-        messages.append(response)
-        for tool_call in response.tool_calls:
-            for t in tools:
-                if t.name == tool_call["name"]:
-                    messages.append(ToolMessage(
-                        content=t.invoke(tool_call["args"]),
-                        tool_call_id=tool_call["id"],
-                    ))
-                    break
-        respuesta_final = chat_con_tools.invoke(messages).content
-    else:
-        respuesta_final = response.content
+def chat_con_agente(mensaje_usuario: str, thread_id: str) -> str:
+    """Un turno del agente. El historial lo recarga el checkpointer por thread_id."""
+    log_mensaje(thread_id, "user", mensaje_usuario)  # antes: si el turno falla, queda la pregunta
 
-    history.add_user_message(mensaje_usuario)
-    history.add_ai_message(respuesta_final)
+    resultado = agente.invoke(
+        {"messages": [HumanMessage(content=mensaje_usuario)]},
+        config={"configurable": {"thread_id": thread_id}},
+    )
+    mensajes = resultado["messages"]
+    respuesta_final = str(mensajes[-1].text)
+
+    log_mensaje(thread_id, "assistant", respuesta_final, _tools_del_turno(mensajes))
     return respuesta_final
 ```
 
@@ -392,46 +406,25 @@ __all__ = ["mi_accion"]
 
 ---
 
-## `conversation_history/postgres_chat_history.py`
+## `conversation_history/` — checkpointer + log plano
+
+Copiar tal cual los tres archivos del proyecto de referencia (Alpha State):
+
+| Archivo | Contenido |
+|---|---|
+| `conexion.py` | `DATABASE_URL` con `quote_plus(DB_PASSWORD)` + `ConnectionPool(min_size=1, max_size=10, kwargs={"autocommit": True, "prepare_threshold": 0, "connect_timeout": 5}, timeout=5, check=ConnectionPool.check_connection, open=True)` |
+| `checkpointer.py` | `checkpointer = PostgresSaver(pool)` + `crear_tablas_checkpointer()`: `setup()` y `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` en las 4 tablas `checkpoint*` |
+| `chat_log.py` | `crear_tabla_log()` (tabla `DB_CHAT_LOG_TABLE`, default `chat_log`: `thread_id`, `rol`, `contenido`, `tools_usadas TEXT[]`, `creado_en`, índice `(thread_id, creado_en)`, RLS) + `log_mensaje(...)` que **nunca lanza** |
+
+Nombres de tabla siempre con `psycopg.sql.Identifier`, nunca interpolados.
+
+En el canal, el `thread_id` es el **contacto**:
 
 ```python
-"""
-Histórico de conversación persistente en PostgreSQL.
-
-Requeridas en .env: DB_USER, DB_PASSWORD, DB_HOST
-Opcionales: DB_PORT (5432), DB_NAME (postgres), DB_CHAT_TABLE (chat_history)
-"""
-
-import os
-from urllib.parse import quote_plus
-
-from dotenv import load_dotenv, find_dotenv
-from langchain_postgres import PostgresChatMessageHistory
-import psycopg
-
-load_dotenv(find_dotenv())
-
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "postgres")
-
-if not all([DB_USER, DB_PASSWORD, DB_HOST]):
-    raise ValueError("❌ Faltan DB_USER, DB_PASSWORD o DB_HOST en .env")
-
-# quote_plus: passwords con caracteres especiales rompen la URL sin esto.
-DATABASE_URL = (
-    f"postgresql://{DB_USER}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-)
-TABLE_NAME = os.getenv("DB_CHAT_TABLE", "chat_history")
-```
-
-En el canal, el `session_id` se deriva del ID de conversación de forma
-determinista para que el cliente retome su hilo:
-
-```python
-session_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"<canal>-{conversation_id}"))
+def build_thread_id(contact_id, conversation_id) -> str:
+    if contact_id:
+        return f"<canal>-contact-{contact_id}"
+    return f"<canal>-conversation-{conversation_id}"
 ```
 
 ---

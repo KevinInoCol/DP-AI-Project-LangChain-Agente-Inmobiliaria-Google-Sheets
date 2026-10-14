@@ -2,7 +2,8 @@
 Agente IA Completo: Base de Conocimiento + Internet + Histórico
 - Tool 1: Base de Conocimiento de Alpha State (RAG con Qdrant)
 - Tool 2: Búsqueda en Internet (Tavily)
-- Histórico: Guarda conversaciones en PostgreSQL
+- Memoria: checkpointer de LangGraph en PostgreSQL (estado completo por thread_id)
+- Log plano: una fila por mensaje en PostgreSQL (reportes y auditoría)
 - Config del modelo: model_config/model_config.yaml
 - System prompt: prompt/prompt.yaml
 
@@ -23,8 +24,10 @@ load_dotenv(find_dotenv())
 # Agregar el directorio actual al path para importar tools (portable para despliegue)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from langchain.agents import create_agent
+from langchain.agents.middleware import ModelRequest, dynamic_prompt
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 # ============================================
 # 0. CARGA DE CONFIGURACIÓN (YAML)
@@ -52,8 +55,13 @@ from tools.Google_Sheets import (
     consultar_desglose_inquilino,
 )
 
-# Histórico de conversación (PostgreSQL)
-from conversation_history import crear_tabla_historial, get_session_history
+# Memoria (checkpointer) + log plano de la conversación (PostgreSQL)
+from conversation_history import (
+    checkpointer,
+    crear_tablas_checkpointer,
+    crear_tabla_log,
+    log_mensaje,
+)
 
 # ============================================
 # 2. LISTA DE TOOLS DISPONIBLES
@@ -67,9 +75,10 @@ tools = [
 ]
 
 # ============================================
-# 3. CONFIGURACIÓN DEL MODELO CON TOOLS
+# 3. CONFIGURACIÓN DEL MODELO
 # ============================================
 # Parámetros del LLM desde model_config/model_config.yaml
+# (create_agent le enlaza las tools; no hace falta bind_tools)
 _llm_cfg = model_config["llm"]
 
 chat = init_chat_model(
@@ -77,7 +86,6 @@ chat = init_chat_model(
     model_provider=_llm_cfg["provider"],
     temperature=_llm_cfg["temperature"],
 )
-chat_con_tools = chat.bind_tools(tools)
 
 # ============================================
 # 4. PROMPT DEL AGENTE + CONTEXTO FECHA/HORA
@@ -107,77 +115,58 @@ def _render_system_prompt() -> str:
     return SYSTEM_PROMPT_TEMPLATE.replace("{fecha_hora_actual}", _contexto_fecha_hora())
 
 
-# ============================================
-# 5. INICIALIZAR HISTORIAL (PostgreSQL)
-# ============================================
-# crear_tabla_historial y get_session_history se importan desde conversation_history/
-crear_tabla_historial()
+@dynamic_prompt
+def _system_prompt_del_turno(request: ModelRequest) -> str:
+    """System prompt con la fecha/hora de ESTE turno. No se persiste en el checkpointer."""
+    return _render_system_prompt()
+
 
 # ============================================
-# 6. FUNCIÓN DE CHAT CON AGENTE + TOOLS
+# 5. INICIALIZAR MEMORIA (PostgreSQL)
 # ============================================
-def chat_con_agente(mensaje_usuario: str, session_id: str) -> str:
-    """
-    Ejecuta el agente con tools y memoria.
-    El agente decide si usar herramientas o responder directamente.
-    """
-    # Obtener historial
-    history = get_session_history(session_id)
-    mensajes_previos = history.messages
-    
-    # Construir mensajes para el modelo (inyectamos fecha/hora actual en cada turno)
-    messages = [{"role": "system", "content": _render_system_prompt()}]
-    
-    # Agregar historial
-    for msg in mensajes_previos:
+# Ambas son idempotentes: crean las tablas solo si no existen
+crear_tablas_checkpointer()
+crear_tabla_log()
+
+# ============================================
+# 6. AGENTE (bucle de tools + memoria por thread_id)
+# ============================================
+agente = create_agent(
+    model=chat,
+    tools=tools,
+    middleware=[_system_prompt_del_turno],
+    checkpointer=checkpointer,
+)
+
+
+def _tools_del_turno(mensajes: list) -> list[str]:
+    """Nombres de las tools que el agente llamó después del último mensaje del usuario."""
+    usadas = []
+    for msg in reversed(mensajes):
         if isinstance(msg, HumanMessage):
-            messages.append({"role": "user", "content": msg.content})
-        elif isinstance(msg, AIMessage):
-            messages.append({"role": "assistant", "content": msg.content})
-    
-    # Agregar mensaje actual
-    messages.append({"role": "user", "content": mensaje_usuario})
-    
-    # Invocar modelo con tools
-    response = chat_con_tools.invoke(messages)
-    
-    # Procesar tool calls si existen
-    if response.tool_calls:
-        # Ejecutar cada tool
-        tool_results = []
-        for tool_call in response.tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
-            
-            # Buscar y ejecutar la tool
-            for t in tools:
-                if t.name == tool_name:
-                    result = t.invoke(tool_args)
-                    tool_results.append({
-                        "tool_call_id": tool_call["id"],
-                        "result": result
-                    })
-                    break
-        
-        # Agregar respuesta del modelo con tool calls y resultados
-        messages.append(response)
-        for tr in tool_results:
-            messages.append(ToolMessage(
-                content=tr["result"],
-                tool_call_id=tr["tool_call_id"]
-            ))
-        
-        # Segunda llamada para obtener respuesta final
-        final_response = chat_con_tools.invoke(messages)
-        respuesta_final = final_response.content
-    else:
-        # Sin tool calls, respuesta directa
-        respuesta_final = response.content
-    
-    # Guardar en historial
-    history.add_user_message(mensaje_usuario)
-    history.add_ai_message(respuesta_final)
-    
+            break
+        if isinstance(msg, AIMessage):
+            usadas.extend(tc["name"] for tc in msg.tool_calls)
+    return list(reversed(usadas))
+
+
+def chat_con_agente(mensaje_usuario: str, thread_id: str) -> str:
+    """
+    Ejecuta un turno del agente. El historial lo recarga el checkpointer por thread_id;
+    el agente encadena tantas llamadas a tools como necesite antes de responder.
+    """
+    # Se registra antes de invocar: si el turno falla, queda constancia de la pregunta
+    log_mensaje(thread_id, "user", mensaje_usuario)
+
+    resultado = agente.invoke(
+        {"messages": [HumanMessage(content=mensaje_usuario)]},
+        config={"configurable": {"thread_id": thread_id}},
+    )
+    mensajes = resultado["messages"]
+    respuesta_final = str(mensajes[-1].text)
+
+    log_mensaje(thread_id, "assistant", respuesta_final, _tools_del_turno(mensajes))
+
     return respuesta_final
 
 
@@ -191,7 +180,7 @@ def main():
     print("🔧 Tools disponibles:")
     for t in tools:
         print(f"   - {t.name}")
-    print("💾 Historial: PostgreSQL")
+    print("💾 Memoria: checkpointer PostgreSQL + log plano")
     
     # Menú de sesión
     print("\nOpciones de sesión:")

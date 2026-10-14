@@ -1,14 +1,17 @@
 """
-Módulo de Histórico de Conversación.
-Provee persistencia de mensajes por session_id en PostgreSQL.
+Módulo de Histórico de Conversación (PostgreSQL).
+
+Dos piezas que se complementan:
+- checkpointer: estado completo del agente por thread_id (memoria de corto plazo)
+- chat_log: una fila por mensaje, legible con SQL (reportes y auditoría)
 """
 
-from conversation_history.postgres_chat_history import (
-    crear_tabla_historial,
-    get_session_history,
-)
+from conversation_history.checkpointer import checkpointer, crear_tablas_checkpointer
+from conversation_history.chat_log import crear_tabla_log, log_mensaje
 
 __all__ = [
-    "crear_tabla_historial",
-    "get_session_history",
+    "checkpointer",
+    "crear_tablas_checkpointer",
+    "crear_tabla_log",
+    "log_mensaje",
 ]

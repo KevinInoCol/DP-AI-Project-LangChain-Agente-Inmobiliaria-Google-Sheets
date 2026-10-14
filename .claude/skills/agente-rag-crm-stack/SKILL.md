@@ -24,7 +24,7 @@ inventes una distinta salvo que el usuario lo pida.
 | LLM | **GPT-4.1** vía `init_chat_model` | Default del usuario — ver skill `default-llm-model` |
 | Embeddings | **`text-embedding-3-small`** | Un solo modelo en todo el proyecto. Ver regla 2 |
 | Vector store | **Qdrant** (`langchain-qdrant` + `qdrant-client`) | Remoto en VPS. Colecciones con prefijo `tenant_id_` |
-| Memoria | **PostgreSQL** (`langchain-postgres` + `psycopg[binary]`) | `PostgresChatMessageHistory` por `session_id` |
+| Memoria | **PostgreSQL** (`langgraph-checkpoint-postgres` + `psycopg[binary,pool]`) | Checkpointer `PostgresSaver` por `thread_id` + tabla plana `chat_log` |
 | Búsqueda web | **Tavily** (`langchain-tavily`) | Solo para lo ajeno al dominio del negocio |
 | Datos de negocio | **Google Sheets** (`gspread` + `google-auth`) o la API que toque | Scope de **solo lectura** salvo que se pida escribir |
 | Canal | **Chatwoot** vía **FastAPI** + `uvicorn` | Webhook `POST /webhook` |
@@ -58,7 +58,9 @@ tutoriales que circulan.
 │
 ├── conversation_history/          ← persistencia de la conversación
 │   ├── __init__.py
-│   └── postgres_chat_history.py       PostgresChatMessageHistory por session_id
+│   ├── conexion.py                    ConnectionPool compartido (valida antes de entregar)
+│   ├── checkpointer.py                PostgresSaver: memoria del agente (tablas checkpoint*)
+│   └── chat_log.py                    log plano, una fila por mensaje (auditoría)
 │
 ├── RAG-Clasico-con-Qdrant/        ← pipeline de INGESTA (reindexado)
 │   ├── rag.py                         loader → splitter → embeddings → Qdrant
@@ -222,14 +224,26 @@ Un archivo por tool. Cada una:
   modelo no rellene el hueco.
 
 ### `conversation_history/`
-`PostgresChatMessageHistory` por `session_id`. En canales de mensajería el
-`session_id` se deriva de forma determinista del ID de la conversación:
+Dos piezas, y van las dos (guía completa: `references/memoria.md` de la skill
+`agent-project-structure`):
 
-```python
-uuid.uuid5(uuid.NAMESPACE_DNS, f"chatwoot-{conversation_id}")
-```
+| Pieza | Para qué |
+|---|---|
+| **Checkpointer** `PostgresSaver` → `create_agent(checkpointer=...)` | Estado completo del hilo (incluye tool calls y sus resultados). No es legible con SQL |
+| **Log plano** `chat_log` | Una fila por mensaje + tools usadas. Reportes, QA, auditoría. Escritura fire-and-forget |
 
-Así el mismo cliente retoma su hilo sin guardar un mapeo aparte.
+`PostgresChatMessageHistory` / `RunnableWithMessageHistory` **ya no se usan**: no
+están en la documentación de LangChain v1 y no guardan las tool calls.
+
+- **Pool, no conexión suelta.** `ConnectionPool(..., check=ConnectionPool.check_connection,
+  kwargs={"autocommit": True, "prepare_threshold": 0, ...})` compartido por las dos piezas.
+  Con `from_conn_string` el bot muere en silencio cuando el proveedor cierra la conexión.
+- **`thread_id` = el contacto**, no la conversación: `f"chatwoot-contact-{sender_id}"`.
+  Chatwoot abre conversaciones nuevas y con su ID la persona perdería el historial.
+- **Fecha/hora del prompt con `@dynamic_prompt`**: se renderiza en cada turno y no se
+  persiste en el checkpointer.
+- **RLS activado** en `checkpoint*` y `chat_log` al crearlas (Supabase las expone por
+  PostgREST si no).
 
 ### `RAG-Clasico-con-Qdrant/`
 Solo **ingesta**, ejecutable directo (`python rag.py`). La config de retrieval

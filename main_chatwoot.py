@@ -105,12 +105,17 @@ def update_chatwoot_labels(conversation_id: int, labels: list) -> bool:
         return False
 
 
-def conversation_id_to_uuid(conversation_id: int) -> str:
+def build_thread_id(contact_id, conversation_id: int) -> str:
     """
-    Convierte un conversation_id de Chatwoot a un UUID válido.
-    Esto permite usar el mismo session_id para la misma conversación.
+    thread_id de la memoria del agente.
+
+    Se usa el CONTACTO y no la conversación: Chatwoot abre una conversación nueva
+    cuando la anterior se resuelve, y con el ID de conversación la misma persona
+    perdería su historial. Si el webhook no trae contacto, se cae a la conversación.
     """
-    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"chatwoot-{conversation_id}"))
+    if contact_id:
+        return f"chatwoot-contact-{contact_id}"
+    return f"chatwoot-conversation-{conversation_id}"
 
 
 # ============================================
@@ -185,12 +190,12 @@ async def chatwoot_webhook(request: Request):
     try:
         print(f"   🤖 Procesando con el agente...")
         
-        # Convertir conversation_id a UUID para el historial
-        session_id = conversation_id_to_uuid(conversation_id)
-        print(f"   📝 Session ID: {session_id[:8]}...")
-        
+        # La memoria va por contacto (ver build_thread_id)
+        thread_id = build_thread_id(sender.get('id'), conversation_id)
+        print(f"   📝 Thread ID: {thread_id}")
+
         # Llamar al agente
-        respuesta = chat_con_agente(message_content, session_id)
+        respuesta = chat_con_agente(message_content, thread_id)
         
         print(f"   ✅ Respuesta generada ({len(respuesta)} chars)")
         
@@ -281,7 +286,7 @@ if __name__ == "__main__":
     print(f"🤖 Agente: Alpha State (Sheets + RAG + Internet + Memoria)")
     print(f"🧠 Modelo: GPT-4.1")
     print(f"🔧 Tools: {', '.join(t.name for t in tools)}")
-    print(f"💾 Historial: PostgreSQL")
+    print(f"💾 Memoria: checkpointer PostgreSQL + log plano")
     print(f"🏷️  Etiqueta bot (handoff): {BOT_LABEL or 'ninguna'}")
     print(f"🚫 No responde si tiene tag: {TAG_IA_OFF}")
     print("=" * 60)

@@ -17,8 +17,8 @@ langchain-text-splitters  # RecursiveCharacterTextSplitter y otros splitters
 # ============================================
 # HISTÓRICO DE CONVERSACIÓN (PostgreSQL)
 # ============================================
-langchain-postgres        # PostgresChatMessageHistory
-psycopg[binary]           # Driver PostgreSQL v3
+langgraph-checkpoint-postgres   # PostgresSaver: memoria del agente por thread_id
+psycopg[binary,pool]            # Driver PostgreSQL v3 + pool de conexiones
 
 # ============================================
 # BASE DE CONOCIMIENTO (RAG con Qdrant)

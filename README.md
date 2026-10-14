@@ -12,7 +12,8 @@ Responde dos tipos de consulta:
 | "¿Cuánto es la multa por atraso?", "¿qué documentos necesito?" | **RAG sobre Qdrant** — base de conocimiento con las políticas de Alpha State |
 
 Además busca en internet (Tavily) para temas ajenos al contrato, y recuerda la
-conversación entre mensajes gracias al histórico en PostgreSQL.
+conversación entre mensajes gracias a la memoria en PostgreSQL (checkpointer de
+LangGraph + un log plano de mensajes para auditoría).
 
 Se puede usar por **CLI** o exponerlo como **webhook de Chatwoot**.
 
@@ -36,8 +37,10 @@ Se puede usar por **CLI** o exponerlo como **webhook de Chatwoot**.
 │   ├── Busqueda_internet.py       #   buscar_internet  (Tavily)
 │   └── Hora_y_fecha.py            #   obtener_fecha_hora
 │
-├── conversation_history/          # Persistencia de la conversación por session_id
-│   └── postgres_chat_history.py   #   PostgresChatMessageHistory sobre PostgreSQL
+├── conversation_history/          # Persistencia de la conversación por thread_id
+│   ├── conexion.py                #   Pool de conexiones PostgreSQL compartido
+│   ├── checkpointer.py            #   PostgresSaver: memoria del agente (tablas checkpoint*)
+│   └── chat_log.py                #   Log plano: una fila por mensaje (tabla chat_log)
 │
 ├── vector_store.py                # FUENTE ÚNICA del par (embedding model, colección)
 │
@@ -83,7 +86,7 @@ Rellena el `.env` con tus valores. Cada bloque está marcado como `[REQUERIDA]` 
 | Variable | Para qué |
 |---|---|
 | `OPENAI_API_KEY` | LLM y embeddings |
-| `DB_USER`, `DB_PASSWORD`, `DB_HOST` | Histórico de conversación en PostgreSQL |
+| `DB_USER`, `DB_PASSWORD`, `DB_HOST` | Memoria del agente y log de mensajes en PostgreSQL |
 | `QDRANT_URL`, `QDRANT_API_KEY`, `QDRANT_COLLECTION` | Base de conocimiento (RAG) |
 | `TAVILY_API_KEY` | Búsqueda en internet |
 | `GOOGLE_SHEET_ID`, `GOOGLE_APPLICATION_CREDENTIALS` | Tool de Google Sheets |
@@ -118,7 +121,19 @@ python agent.py
 ```
 
 Permite iniciar una conversación nueva o retomar una existente pegando su UUID.
-El histórico se guarda por `session_id`, así que la conversación sobrevive al cierre.
+La memoria se guarda por `thread_id` (el UUID), así que la conversación sobrevive al cierre.
+
+### Memoria
+
+| Pieza | Tablas | Para qué |
+|---|---|---|
+| Checkpointer (`PostgresSaver`) | `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations` | Estado completo del agente (incluye tool calls). Lo recarga en cada turno. No es legible con SQL |
+| Log plano | `chat_log` | Una fila por mensaje con las tools usadas. Para reportes, QA y auditoría |
+
+Ambas se crean solas al arrancar y nacen con RLS activado (en Supabase, nadie las
+lee por la API pública). En Chatwoot el `thread_id` es el **contacto**
+(`chatwoot-contact-<id>`), así la persona conserva su historial aunque abra otra
+conversación.
 
 ### Webhook de Chatwoot
 
@@ -129,7 +144,7 @@ python main_chatwoot.py        # levanta en http://0.0.0.0:8000
 | Endpoint | Método | Para qué |
 |---|---|---|
 | `/webhook` | POST | Recibe los eventos de Chatwoot y responde en la conversación |
-| `/test` | POST | Probar el agente sin Chatwoot: `{"message": "...", "session_id": "..."}` |
+| `/test` | POST | Probar el agente sin Chatwoot: `{"message": "...", "session_id": "..."}` (el `session_id` se usa como `thread_id`) |
 | `/health` | GET | Healthcheck |
 
 Apunta el webhook de tu cuenta de Chatwoot a `https://<tu-dominio>/webhook`.
@@ -143,7 +158,7 @@ humano cuando el locatario lo pide.
 - **LangChain 1.x** — orquestación y tool calling
 - **OpenAI GPT-4.1** — modelo del agente
 - **Qdrant** — vector store de la base de conocimiento
-- **PostgreSQL** — histórico de conversación
+- **PostgreSQL** — memoria del agente (LangGraph `PostgresSaver`) + log de mensajes
 - **Google Sheets API** — importes del boleto (solo lectura)
 - **Tavily** — búsqueda en internet
 - **FastAPI + Chatwoot** — canal de mensajería
