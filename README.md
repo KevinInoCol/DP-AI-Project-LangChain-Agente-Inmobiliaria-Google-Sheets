@@ -19,6 +19,14 @@ Se puede usar por **CLI** o exponerlo como **webhook de Chatwoot**.
 
 ---
 
+## Datos del proyecto
+
+Los datos para reproducir el agente están en esta carpeta de Google Drive:
+
+📁 **[Datos del proyecto (Google Drive)](https://drive.google.com/drive/folders/1708Spj4HnHt7wrfL2FMlyq6udQCrbDZ4?usp=sharing)**
+
+---
+
 ## Estructura
 
 ```
