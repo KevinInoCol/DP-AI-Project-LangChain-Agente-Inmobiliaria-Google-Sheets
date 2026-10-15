@@ -21,9 +21,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Importar directamente el agente (sin rutas locales)
 from agent import chat_con_agente, tools
+from tools.Google_Sheets import verificar_acceso_google_sheets
 
 print("🤖 Cargando Agente Alpha State (Qdrant)...")
 print("✅ Agente Alpha State cargado correctamente")
+
+# Verificar al arrancar que la Service Account puede leer la hoja (log verde/rojo)
+verificar_acceso_google_sheets()
 
 # ============================================
 # CONFIGURACIÓN DE CHATWOOT
@@ -68,7 +72,7 @@ def send_chatwoot_message(conversation_id: int, message: str) -> bool:
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
         response.raise_for_status()
         print(f"   ✅ Mensaje enviado a conversación {conversation_id}")
         return True
@@ -96,7 +100,7 @@ def update_chatwoot_labels(conversation_id: int, labels: list) -> bool:
     payload = {'labels': labels}
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
         response.raise_for_status()
         print(f"   ✅ Etiquetas actualizadas: {labels}")
         return True
@@ -139,11 +143,11 @@ async def chatwoot_webhook(request: Request):
     # Extraer información del webhook
     event = data.get('event')
     message_type = data.get('message_type')
-    conversation = data.get('conversation', {})
-    labels = conversation.get('labels', [])
+    conversation = data.get('conversation') or {}
+    labels = conversation.get('labels') or []
     message_content = data.get('content')
     conversation_id = conversation.get('id')
-    sender = data.get('sender', {})
+    sender = data.get('sender') or {}
     sender_type = sender.get('type', '')
     
     # Debug

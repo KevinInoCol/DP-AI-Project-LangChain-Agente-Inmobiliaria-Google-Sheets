@@ -43,10 +43,56 @@ GOOGLE_APPLICATION_CREDENTIALS = os.getenv(
 # Scope de SOLO LECTURA
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
+# Colores ANSI para los logs de acceso a Google Sheets
+VERDE = "\033[92m"
+ROJO = "\033[91m"
+RESET = "\033[0m"
+
 if not GOOGLE_SHEET_ID:
     raise ValueError(
         "❌ Falta variable GOOGLE_SHEET_ID en .env"
     )
+
+
+# ============================================
+# LOGS DE ACCESO
+# ============================================
+def _log_ok(mensaje: str) -> None:
+    print(f"{VERDE}✅ [Google Sheets] {mensaje}{RESET}")
+
+
+def _log_error(mensaje: str) -> None:
+    print(f"{ROJO}❌ [Google Sheets] {mensaje}{RESET}")
+
+
+def _explicar_error(e: Exception, sa_email: str) -> str:
+    """Traduce la excepción de gspread/google-auth a la causa más probable."""
+    if isinstance(e, FileNotFoundError):
+        return str(e)
+    if isinstance(e, gspread.exceptions.SpreadsheetNotFound):
+        return (
+            f"No se encontró la hoja '{GOOGLE_SHEET_ID}'. Verifica GOOGLE_SHEET_ID "
+            f"y que esté compartida con {sa_email}."
+        )
+    if isinstance(e, gspread.exceptions.WorksheetNotFound):
+        return (
+            f"La hoja existe, pero no tiene la pestaña '{GOOGLE_SHEETS_WORKSHEET}'. "
+            f"Revisa GOOGLE_SHEETS_WORKSHEET."
+        )
+    if isinstance(e, PermissionError):
+        return (
+            f"Permiso denegado (403). Comparte la hoja con {sa_email} "
+            f"como Lector/Editor."
+        )
+    if isinstance(e, gspread.exceptions.APIError):
+        status = getattr(e.response, "status_code", "?")
+        if status == 403:
+            return (
+                f"Permiso denegado (403). Comparte la hoja con {sa_email} o "
+                f"habilita la Google Sheets API en el proyecto de GCP. Detalle: {e}"
+            )
+        return f"Error de la API de Google Sheets (HTTP {status}): {e}"
+    return f"{type(e).__name__}: {e}"
 
 
 # ============================================
@@ -70,17 +116,41 @@ def _get_worksheet():
         return _worksheet
 
     creds_path = _resolve_credentials_path(GOOGLE_APPLICATION_CREDENTIALS)
-    if not os.path.isfile(creds_path):
-        raise FileNotFoundError(
-            f"No se encontró el JSON de la cuenta de servicio en '{creds_path}'. "
-            f"Descárgalo desde Google Cloud y colócalo en esa ruta."
-        )
+    sa_email = "la cuenta de servicio"
+    try:
+        if not os.path.isfile(creds_path):
+            raise FileNotFoundError(
+                f"No se encontró el JSON de la cuenta de servicio en '{creds_path}'. "
+                f"Descárgalo desde Google Cloud y colócalo en esa ruta."
+            )
 
-    creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
-    client = gspread.authorize(creds)
-    sheet = client.open_by_key(GOOGLE_SHEET_ID)
-    _worksheet = sheet.worksheet(GOOGLE_SHEETS_WORKSHEET)
+        creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+        sa_email = creds.service_account_email
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = sheet.worksheet(GOOGLE_SHEETS_WORKSHEET)
+        # Lectura real: confirma que la cuenta de servicio puede leer celdas
+        worksheet.row_values(GOOGLE_SHEETS_HEADER_ROW)
+    except Exception as e:
+        _log_error("La Service Account NO logró acceso a Google Sheets.")
+        _log_error(f"   Cuenta: {sa_email}")
+        _log_error(f"   Causa: {_explicar_error(e, sa_email)}")
+        raise
+
+    _log_ok("La Service Account logró ACCESO COMPLETO a Google Sheets.")
+    _log_ok(f"   Cuenta: {sa_email}")
+    _log_ok(f"   Hoja: '{sheet.title}' → pestaña '{worksheet.title}'")
+    _worksheet = worksheet
     return _worksheet
+
+
+def verificar_acceso_google_sheets() -> bool:
+    """Prueba la conexión al arrancar y deja el log verde o rojo. No lanza excepción."""
+    try:
+        _get_worksheet()
+        return True
+    except Exception:
+        return False
 
 
 # ============================================
